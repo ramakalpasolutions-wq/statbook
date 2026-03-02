@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendOTPEmail } from '@/lib/mailer'
-import { sendSMSOTP } from '@/lib/sms'
+
 import { generateOTP, getOTPExpiry } from '@/lib/otpHelper'
+import { sendOTPSMS } from '@/lib/sms'
 
 export async function POST(req) {
   const { type, email, phone, otp, action } = await req.json()
@@ -39,7 +40,7 @@ export async function POST(req) {
 
     if (type === 'phone' && phone) {
       try {
-        await sendSMSOTP(phone, code)
+        await sendOTPSMS(phone, code)
         return NextResponse.json({ success: true, message: 'OTP sent to phone' })
       } catch (err) {
         console.error('Twilio error:', err.message)
