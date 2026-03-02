@@ -1,0 +1,329 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  HOSPITAL_ADMIN
+  DOCTOR
+  USER
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+enum ConsultationStatus {
+  PENDING
+  ACCEPTED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum HospitalType {
+  MULTI_SPECIALITY
+  NORMAL
+  CLINIC
+}
+
+enum CancelledBy {
+  DOCTOR
+  PATIENT
+  ADMIN
+  HOSPITAL
+}
+
+enum ConsultationType {
+  ONLINE
+  OFFLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum SettlementStatus {
+  UNSETTLED
+  SETTLED
+}
+
+// ─── USER ─────────────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  email         String   @unique
+  phone         String   @unique
+  address       String?
+  location      String?
+  password      String
+  role          Role     @default(USER)
+  profilePhoto  String?
+  emailVerified Boolean  @default(false)
+  phoneVerified Boolean  @default(false)
+  status        Status   @default(ACTIVE)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // ✅ Removed doctorProfile relation
+  consultations Consultation[]  @relation("UserConsultations")
+  hospitalAdmin Hospital?       @relation("HospitalAdmin")
+  familyMembers FamilyMember[]
+  auditLogs     AuditLog[]
+}
+
+
+// ─── FAMILY MEMBER ────────────────────────────────────────────
+
+model FamilyMember {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id])
+  name        String
+  relation    String
+  phone       String?
+  age         Int?
+  bloodGroup  String?
+  createdAt   DateTime @default(now())
+}
+
+// ─── OTP ──────────────────────────────────────────────────────
+// Note: userId stored as plain string (may be ObjectId or 'temp')
+// No relation to avoid ObjectId casting errors
+
+model OTP {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String?
+  otp       String
+  type      String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─── HOSPITAL ─────────────────────────────────────────────────
+
+model Hospital {
+  id            String       @id @default(auto()) @map("_id") @db.ObjectId
+  hospitalId    String       @unique
+  name          String
+  locationLink  String?
+  address       String
+  state         String?
+  district      String?
+  city          String?
+  timings       String
+  phone         String       @unique
+  type          HospitalType @default(NORMAL)
+  email         String       @unique
+  website       String?
+  password      String
+  status        Status       @default(PENDING)
+  description   String?
+  facilities    String[]     @default([])
+  isEmergency   Boolean      @default(false)
+  isOnline      Boolean      @default(false)
+  adminId       String?      @unique @db.ObjectId
+  admin         User?        @relation("HospitalAdmin", fields: [adminId], references: [id])
+  inactiveSince DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  bankDetails   BankDetails?
+  doctors       Doctor[]
+  latitude   Float?
+  longitude  Float?
+  consultations Consultation[]
+  revenue       Revenue[]
+  settlements   Settlement[]
+  emergencies   Emergency[]
+}
+
+// ─── BANK DETAILS ─────────────────────────────────────────────
+
+model BankDetails {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  hospitalId        String   @unique @db.ObjectId
+  hospital          Hospital @relation(fields: [hospitalId], references: [id])
+  accountHolderName String
+  bankName          String
+  accountNumber     String
+  ifscCode          String
+  branchName        String
+  upiId             String?
+}
+
+// ─── DOCTOR ───────────────────────────────────────────────────
+
+model Doctor {
+  id                    String   @id @default(auto()) @map("_id") @db.ObjectId
+  doctorId              String   @unique
+  name                  String
+  specializations       String[] @default([])
+  experience            Int
+  phone                 String   @unique
+  email                 String   @unique
+  address               String?
+  bloodGroup            String?
+  qualification         String?
+  consultationFee       Float
+  password              String
+  availabilityType      String   @default("FULL_DAY")
+  startTime             String?
+  endTime               String?
+  timeSlots             Json?
+  isOnlineConsultation  Boolean  @default(false)
+  onlineConsultationFee Float?
+  status                Status   @default(ACTIVE)
+  hospitalId            String   @db.ObjectId
+  hospital              Hospital @relation(fields: [hospitalId], references: [id])
+
+  // ✅ Plain string reference — no Prisma relation (avoids unique+null MongoDB bug)
+  userId        String?  @db.ObjectId
+
+  inactiveSince DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  consultations Consultation[]
+  revenue       Revenue[]
+  leaves        DoctorLeave[]
+}
+
+
+// ─── DOCTOR LEAVE ─────────────────────────────────────────────
+
+model DoctorLeave {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  doctorId  String   @db.ObjectId
+  doctor    Doctor   @relation(fields: [doctorId], references: [id])
+  startDate DateTime
+  endDate   DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+}
+
+// ─── CONSULTATION ─────────────────────────────────────────────
+
+model Consultation {
+  id              String             @id @default(auto()) @map("_id") @db.ObjectId
+  consultationId  String             @unique
+  userId          String             @db.ObjectId
+  user            User               @relation("UserConsultations", fields: [userId], references: [id])
+  doctorId        String             @db.ObjectId
+  doctor          Doctor             @relation(fields: [doctorId], references: [id])
+  hospitalId      String             @db.ObjectId
+  hospital        Hospital           @relation(fields: [hospitalId], references: [id])
+  type            ConsultationType   @default(OFFLINE)
+  date            DateTime
+  time            String
+  status          ConsultationStatus @default(PENDING)
+  cancelledBy     CancelledBy?
+  cancelledByName String?
+  rescheduledBy   String?
+  description     String?
+  patientName     String?
+  patientRelation String?
+  meetLink        String?
+  fee             Float
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  revenue Revenue?
+  payment Payment?
+}
+
+// ─── PAYMENT ──────────────────────────────────────────────────
+
+model Payment {
+  id                String        @id @default(auto()) @map("_id") @db.ObjectId
+  consultationId    String        @unique @db.ObjectId
+  consultation      Consultation  @relation(fields: [consultationId], references: [id])
+  razorpayOrderId   String
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Float
+  status            PaymentStatus @default(PENDING)
+  retryCount        Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+// ─── REVENUE ──────────────────────────────────────────────────
+
+model Revenue {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  consultationId String       @unique @db.ObjectId
+  consultation   Consultation @relation(fields: [consultationId], references: [id])
+  doctorId       String       @db.ObjectId
+  doctor         Doctor       @relation(fields: [doctorId], references: [id])
+  hospitalId     String       @db.ObjectId
+  hospital       Hospital     @relation(fields: [hospitalId], references: [id])
+  totalRevenue   Float
+  commission     Float
+  payable        Float
+  status         Status       @default(ACTIVE)
+  weekStart      DateTime?
+  weekEnd        DateTime?
+  createdAt      DateTime     @default(now())
+}
+
+// ─── SETTLEMENT ───────────────────────────────────────────────
+
+model Settlement {
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  hospitalId   String           @db.ObjectId
+  hospital     Hospital         @relation(fields: [hospitalId], references: [id])
+  weekStart    DateTime
+  weekEnd      DateTime
+  totalRevenue Float
+  commission   Float
+  payable      Float
+  status       SettlementStatus @default(UNSETTLED)
+  settledAt    DateTime?
+  createdAt    DateTime         @default(now())
+}
+
+// ─── EMERGENCY ────────────────────────────────────────────────
+
+model Emergency {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String?  @db.ObjectId
+  patientName  String
+  phone        String
+  latitude     Float?
+  longitude    Float?
+  locationText String?
+  note         String?
+  hospitalId   String   @db.ObjectId
+  hospital     Hospital @relation(fields: [hospitalId], references: [id])
+  status       String   @default("PENDING")
+  assignedTo   String?
+  requestTime  DateTime @default(now())
+  attendedAt   DateTime?
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  action     String
+  entityType String
+  entityId   String
+  deletedBy  String?  @db.ObjectId
+  user       User?    @relation(fields: [deletedBy], references: [id])
+  details    Json?
+  createdAt  DateTime @default(now())
+}
